@@ -1,0 +1,24 @@
+<!doctype html>
+<meta charset="utf-8" />
+<title>HDMI Matrix</title>
+<style>
+  body { font-family: system-ui, Arial; margin: 2rem; }
+  button { padding: .8rem 1.1rem; font-size: 1rem; }
+</style>
+<h1>HDMI Matrix</h1>
+<button id="btn">OUT1 Single + Audio Follow • OUT2 Quad(1) 1-4</button>
+<pre id="log"></pre>
+<script>
+  const btn = document.getElementById('btn');
+  const log = document.getElementById('log');
+  btn.onclick = async () => {
+    log.textContent = "Sending…";
+    try {
+      const r = await fetch('/api/one-single-two-quad14', { method: 'POST' });
+      const j = await r.json();
+      log.textContent = JSON.stringify(j, null, 2);
+    } catch (e) {
+      log.textContent = "Error: " + e;
+    }
+  };
+</script>
