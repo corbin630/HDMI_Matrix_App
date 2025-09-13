@@ -22,6 +22,9 @@
   <span id="power-pill" class="pill red">
     <span class="label">Power Status</span><span id="power-text">Off / Unknown</span>
   </span>
+<button id="btn-refresh" style="font:12px system-ui; padding:.25rem .5rem; border-radius:6px; border:1px solid #ccc; cursor:pointer;">
+  Refresh State
+</button>
 </div>
 <button id="btn">OUT1 Single + Audio Follow • OUT2 Quad(1) 1-4</button>
 <pre id="log"></pre>
@@ -154,4 +157,16 @@ document.getElementById('outline').onclick = async () => {
       log.textContent = "Error: " + e;
     }
   };
+  document.getElementById('btn-refresh').addEventListener('click', async () => {
+  const b = document.getElementById('btn-refresh');
+  const orig = b.textContent;
+  b.textContent = 'Refreshing…'; b.disabled = true;
+  try {
+    const r = await fetch('/api/refresh-state', { method: 'POST' });
+    await r.json();
+    // Optionally kick your status poller to update immediately
+    if (typeof refreshStatus === 'function') refreshStatus();
+  } catch {}
+  b.disabled = false; b.textContent = orig;
+});
 </script>
