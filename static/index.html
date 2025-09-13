@@ -22,3 +22,57 @@
     }
   };
 </script>
+
+<h2>Output 1 — Select Input</h2>
+<div style="display:flex; gap:.5rem; flex-wrap:wrap;">
+  <button data-src="1">HDMI 1 → OUT1</button>
+  <button data-src="2">HDMI 2 → OUT1</button>
+  <button data-src="3">HDMI 3 → OUT1</button>
+  <button data-src="4">HDMI 4 → OUT1</button>
+</div>
+<pre id="select-log"></pre>
+
+<script>
+  document.querySelectorAll('button[data-src]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const src = btn.getAttribute('data-src');
+      const log = document.getElementById('select-log');
+      log.textContent = `Routing HDMI ${src} to OUT1…`;
+      try {
+        const r = await fetch(`/api/out1/select/${src}`, { method: 'POST' });
+        const j = await r.json();
+        log.textContent = JSON.stringify(j, null, 2);
+      } catch (e) {
+        log.textContent = "Error: " + e;
+      }
+    });
+  });
+</script>
+
+<h2>Borders</h2>
+<div style="display:flex; gap:.5rem; flex-wrap:wrap;">
+    <button id="outline">Outline current (OUT1) on OUT2 Quad</button>
+    <button id="clear-out2">Clear Borders on OUT2</button>
+</div>
+<pre id="borders-log"></pre>
+
+<script>
+document.getElementById('outline').onclick = async () => {
+  const r = await fetch('/api/outline-current-on-quad', { method: 'POST' });
+  alert(await r.text());
+};
+</script>
+
+<script>
+  document.getElementById('clear-out2').onclick = async () => {
+    const log = document.getElementById('borders-log');
+    log.textContent = "Clearing borders on OUT2…";
+    try {
+      const r = await fetch('/api/clear-borders/2', { method: 'POST' });
+      const j = await r.json();
+      log.textContent = JSON.stringify(j, null, 2);
+    } catch (e) {
+      log.textContent = "Error: " + e;
+    }
+  };
+</script>
