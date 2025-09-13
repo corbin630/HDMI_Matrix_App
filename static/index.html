@@ -6,6 +6,23 @@
   button { padding: .8rem 1.1rem; font-size: 1rem; }
 </style>
 <h1>HDMI Matrix</h1>
+<style>
+  .status-bar { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-bottom: .75rem; }
+  .pill { display: inline-flex; align-items: center; gap: .4rem; font: 12px/1.2 system-ui, Arial, sans-serif;
+          padding: .18rem .45rem; border-radius: 999px; color: #fff; }
+  .pill.green { background: #16a34a; } /* green-600 */
+  .pill.red   { background: #dc2626; } /* red-600  */
+  .label { opacity: .9; font-weight: 600; margin-right: .25rem; }
+</style>
+
+<div class="status-bar">
+  <span id="conn-pill" class="pill red">
+    <span class="label">Matrix Connection</span><span id="conn-text">Disconnected</span>
+  </span>
+  <span id="power-pill" class="pill red">
+    <span class="label">Power Status</span><span id="power-text">Off / Unknown</span>
+  </span>
+</div>
 <button id="btn">OUT1 Single + Audio Follow • OUT2 Quad(1) 1-4</button>
 <pre id="log"></pre>
 <script>
@@ -57,13 +74,75 @@
 <pre id="borders-log"></pre>
 
 <script>
+let lastPower = null;
+let unknownStreak = 0;
+
+function setConn(connected, responsive) {
+  const pill = document.getElementById('conn-pill');
+  const text = document.getElementById('conn-text');
+  if (connected) {
+    pill.classList.remove('red'); pill.classList.add('green');
+    text.textContent = responsive ? 'Connected' : 'Connected (no reply)';
+  } else {
+    pill.classList.remove('green'); pill.classList.add('red');
+    text.textContent = 'Disconnected';
+  }
+}
+
+function setPower(power) {
+  const pill = document.getElementById('power-pill');
+  const text = document.getElementById('power-text');
+  if (power === 'on') {
+    pill.classList.remove('red'); pill.classList.add('green');
+    text.textContent = 'On';
+  } else if (power === 'off') {
+    pill.classList.remove('green'); pill.classList.add('red');
+    text.textContent = 'Off';
+  } else {
+    pill.classList.remove('green'); pill.classList.add('red');
+    text.textContent = 'Unknown';
+  }
+}
+
+async function refreshStatus() {
+  try {
+    const r = await fetch('/api/status');
+    const j = await r.json();
+
+    setConn(j.connected, j.responsive);
+
+    // Debounce "unknown": require 2 consecutive unknowns before showing it
+    const powerNow = j.power || 'unknown';
+    if (powerNow === 'unknown') {
+      unknownStreak++;
+      if (unknownStreak >= 2) {
+        setPower('unknown');
+        lastPower = 'unknown';
+      } // else keep last power state visible
+    } else {
+      unknownStreak = 0;
+      if (powerNow !== lastPower) {
+        setPower(powerNow);
+        lastPower = powerNow;
+      }
+    }
+  } catch (e) {
+    setConn(false, false);
+    // Don't immediately flip power; wait for next sample
+    unknownStreak++;
+    if (unknownStreak >= 2) setPower('unknown');
+  }
+}
+
+// Initial call + steady poll
+refreshStatus();
+setInterval(refreshStatus, 2000);
+
 document.getElementById('outline').onclick = async () => {
   const r = await fetch('/api/outline-current-on-quad', { method: 'POST' });
   alert(await r.text());
 };
-</script>
 
-<script>
   document.getElementById('clear-out2').onclick = async () => {
     const log = document.getElementById('borders-log');
     log.textContent = "Clearing borders on OUT2…";

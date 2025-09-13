@@ -127,3 +127,10 @@ def test_modes():
         "multiview_raw": repr(raw_mv),
         "quadmode_raw": repr(raw_qm),
     }
+
+@app.get("/api/status")
+def status():
+    if SER is None:
+        return {"connected": False, "responsive": False, "power": "unknown"}
+    return SER.status_snapshot()
+
