@@ -49,11 +49,18 @@ def outline_current_on_quad():
     """
     try:
         # 1) modes
-        mv1 = SER.send(C.q_out_multiview(1))
-        mv2 = SER.send(C.q_out_multiview(2))
-        if not (C.is_mode(mv1, "single") and C.is_mode(mv2, "quad")):
-            return {"status": "skipped", "reason": "modes not single/quad"}
+        mv1 = SER.send(C.q_out_multiview(1))       # OUT1
+        qm2 = SER.send(C.q_out_quad_mode(2))       # OUT2
 
+        m1_single = C.is_mode(mv1, "single") or (C.parse_multiview_mode(mv1) == 1 if hasattr(C, "parse_multiview_mode") else False)
+        out2_is_quad = C.is_quad_from_quadmode(qm2)
+
+        # Optional: capture the specific quad layout 1|2
+        quad_layout = C.parse_quad_mode_number(qm2)
+
+        if not (m1_single and out2_is_quad):
+            return {"status": "skipped", "reason": "modes not single/quad", "mv1_raw": repr(mv1), "qm2_raw": repr(qm2)}
+        
         # 2) which HDMI on OUT1 single?
         src1 = SER.send(C.q_out_in_source(1))
         hdmi_n = C.parse_hdmi_number(src1)
@@ -107,3 +114,16 @@ def clear_borders(out_num: int = FPath(..., ge=1, le=2)):
         return {"status": "ok", "out": out_num, "cleared_windows": [1, 2, 3, 4]}
     except Exception as e:
         raise HTTPException(status_code=500, detail=str(e))    
+    
+@app.get("/api/ping")
+def ping():
+    return {"reply": SER.send(b"r output 1 multiview!").decode(errors="ignore")}
+
+@app.get("/api/test-modes")
+def test_modes():
+    raw_mv = SER.send(C.q_out_multiview(2))
+    raw_qm = SER.send(C.term("r output 2 quad mode"))
+    return {
+        "multiview_raw": repr(raw_mv),
+        "quadmode_raw": repr(raw_qm),
+    }
