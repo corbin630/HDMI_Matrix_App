@@ -3,17 +3,17 @@
 <title>HDMI Matrix</title>
 <style>
   body { font-family: system-ui, Arial; margin: 2rem; }
-  button { padding: .8rem 1.1rem; font-size: 1rem; }
-</style>
-<h1>HDMI Matrix</h1>
-<style>
+  button { padding: .8rem 1.1rem; font-size: 1rem; cursor: pointer; }
   .status-bar { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-bottom: .75rem; }
   .pill { display: inline-flex; align-items: center; gap: .4rem; font: 12px/1.2 system-ui, Arial, sans-serif;
           padding: .18rem .45rem; border-radius: 999px; color: #fff; }
-  .pill.green { background: #16a34a; } /* green-600 */
-  .pill.red   { background: #dc2626; } /* red-600  */
+  .pill.green { background: #16a34a; }
+  .pill.red   { background: #dc2626; }
   .label { opacity: .9; font-weight: 600; margin-right: .25rem; }
+  pre { background: #0b0b0b; color: #e5e7eb; padding: .75rem; border-radius: .5rem; overflow: auto; }
 </style>
+
+<h1>HDMI Matrix</h1>
 
 <div class="status-bar">
   <span id="conn-pill" class="pill red">
@@ -22,26 +22,25 @@
   <span id="power-pill" class="pill red">
     <span class="label">Power Status</span><span id="power-text">Off / Unknown</span>
   </span>
-<button id="btn-refresh" style="font:12px system-ui; padding:.25rem .5rem; border-radius:6px; border:1px solid #ccc; cursor:pointer;">
-  Refresh State
-</button>
+  <button id="btn-refresh" style="font:12px system-ui; padding:.25rem .5rem; border-radius:6px; border:1px solid #ccc;">
+    Refresh State
+  </button>
+  <!-- NEW: manual priming button -->
+  <button id="btn-init" style="font:12px system-ui; padding:.25rem .5rem; border-radius:6px; border:1px solid #ccc;">
+    Prime Matrix (Init)
+  </button>
 </div>
-<button id="btn">OUT1 Single + Audio Follow • OUT2 Quad(1) 1-4</button>
+
+<!-- Convenience macro -->
+<button id="btn-one-two">OUT1 Single + Audio Follow • OUT2 Quad Box</button>
+
+<!-- Direct mode actions -->
+<div style="display:flex; gap:.5rem; flex-wrap:wrap; margin:.75rem 0;">
+  <button id="btn-out1-quad14">OUT1 → Quad Box</button>
+  <button id="btn-out1-single-from-audio">OUT1 → Single</button>
+</div>
+
 <pre id="log"></pre>
-<script>
-  const btn = document.getElementById('btn');
-  const log = document.getElementById('log');
-  btn.onclick = async () => {
-    log.textContent = "Sending…";
-    try {
-      const r = await fetch('/api/one-single-two-quad14', { method: 'POST' });
-      const j = await r.json();
-      log.textContent = JSON.stringify(j, null, 2);
-    } catch (e) {
-      log.textContent = "Error: " + e;
-    }
-  };
-</script>
 
 <h2>Output 1 — Select Input</h2>
 <div style="display:flex; gap:.5rem; flex-wrap:wrap;">
@@ -52,121 +51,204 @@
 </div>
 <pre id="select-log"></pre>
 
-<script>
-  document.querySelectorAll('button[data-src]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const src = btn.getAttribute('data-src');
-      const log = document.getElementById('select-log');
-      log.textContent = `Routing HDMI ${src} to OUT1…`;
-      try {
-        const r = await fetch(`/api/out1/select/${src}`, { method: 'POST' });
-        const j = await r.json();
-        log.textContent = JSON.stringify(j, null, 2);
-      } catch (e) {
-        log.textContent = "Error: " + e;
-      }
-    });
-  });
-</script>
-
 <h2>Borders</h2>
 <div style="display:flex; gap:.5rem; flex-wrap:wrap;">
-    <button id="outline">Outline current (OUT1) on OUT2 Quad</button>
-    <button id="clear-out2">Clear Borders on OUT2</button>
+  <button id="outline">Outline current (OUT1) on OUT2 Quad</button>
+  <button id="btn-clear-both">Clear Borders (1 & 2)</button>
+  <button id="clear-out2">Clear Borders on OUT2</button>
 </div>
 <pre id="borders-log"></pre>
 
 <script>
-let lastPower = null;
-let unknownStreak = 0;
-
-function setConn(connected, responsive) {
-  const pill = document.getElementById('conn-pill');
-  const text = document.getElementById('conn-text');
-  if (connected) {
-    pill.classList.remove('red'); pill.classList.add('green');
-    text.textContent = responsive ? 'Connected' : 'Connected (no reply)';
-  } else {
-    pill.classList.remove('green'); pill.classList.add('red');
-    text.textContent = 'Disconnected';
-  }
-}
-
-function setPower(power) {
-  const pill = document.getElementById('power-pill');
-  const text = document.getElementById('power-text');
-  if (power === 'on') {
-    pill.classList.remove('red'); pill.classList.add('green');
-    text.textContent = 'On';
-  } else if (power === 'off') {
-    pill.classList.remove('green'); pill.classList.add('red');
-    text.textContent = 'Off';
-  } else {
-    pill.classList.remove('green'); pill.classList.add('red');
-    text.textContent = 'Unknown';
-  }
-}
-
-async function refreshStatus() {
-  try {
-    const r = await fetch('/api/status');
-    const j = await r.json();
-
-    setConn(j.connected, j.responsive);
-
-    // Debounce "unknown": require 2 consecutive unknowns before showing it
-    const powerNow = j.power || 'unknown';
-    if (powerNow === 'unknown') {
-      unknownStreak++;
-      if (unknownStreak >= 2) {
-        setPower('unknown');
-        lastPower = 'unknown';
-      } // else keep last power state visible
+  // ---------- Status UI helpers ----------
+  function setConn(connected, responsive) {
+    const pill = document.getElementById('conn-pill');
+    const text = document.getElementById('conn-text');
+    if (connected) {
+      pill.classList.remove('red'); pill.classList.add('green');
+      text.textContent = responsive ? 'Connected' : 'Connected (no reply)';
     } else {
-      unknownStreak = 0;
-      if (powerNow !== lastPower) {
-        setPower(powerNow);
-        lastPower = powerNow;
-      }
+      pill.classList.remove('green'); pill.classList.add('red');
+      text.textContent = 'Disconnected';
     }
-  } catch (e) {
-    setConn(false, false);
-    // Don't immediately flip power; wait for next sample
-    unknownStreak++;
-    if (unknownStreak >= 2) setPower('unknown');
   }
-}
+  function setPower(power) {
+    const pill = document.getElementById('power-pill');
+    const text = document.getElementById('power-text');
+    if (power === 'on')      { pill.classList.remove('red'); pill.classList.add('green'); text.textContent = 'On'; }
+    else if (power === 'off'){ pill.classList.remove('green'); pill.classList.add('red'); text.textContent = 'Off'; }
+    else                     { pill.classList.remove('green'); pill.classList.add('red'); text.textContent = 'Unknown'; }
+  }
 
-// Initial call + steady poll
-refreshStatus();
-setInterval(refreshStatus, 2000);
+  // ---------- Request wrapper + immediate status fallback ----------
+  let lastPower = null, unknownStreak = 0;
+  let lastImmediateStatusAt = 0;
 
-document.getElementById('outline').onclick = async () => {
-  const r = await fetch('/api/outline-current-on-quad', { method: 'POST' });
-  alert(await r.text());
-};
+  function triggerImmediateStatusCheck() {
+    const now = Date.now();
+    if (now - lastImmediateStatusAt < 1500) return; // throttle to 1.5s
+    lastImmediateStatusAt = now;
+    void checkConnection();
+    void checkPower();
+  }
 
-  document.getElementById('clear-out2').onclick = async () => {
-    const log = document.getElementById('borders-log');
-    log.textContent = "Clearing borders on OUT2…";
+  async function safeFetch(url, options) {
     try {
-      const r = await fetch('/api/clear-borders/2', { method: 'POST' });
+      const r = await fetch(url, options);
+      if (!r.ok) throw new Error(`HTTP ${r.status}`);
+      return r;
+    } catch (e) {
+      // On any failed command, immediately re-sample status
+      triggerImmediateStatusCheck();
+      throw e;
+    }
+  }
+
+  // ---------- Polling: connection (15s) and power (10 min) ----------
+  async function checkConnection() {
+    try {
+      const r = await fetch('/api/status');
+      const j = await r.json();
+      setConn(j.connected, j.responsive);
+    } catch {
+      setConn(false, false);
+    }
+  }
+
+  async function checkPower() {
+    try {
+      const r = await fetch('/api/status');
+      const j = await r.json();
+      const powerNow = j.power || 'unknown';
+      if (powerNow === 'unknown') {
+        unknownStreak++;
+        if (unknownStreak >= 2) { setPower('unknown'); lastPower = 'unknown'; }
+      } else {
+        unknownStreak = 0;
+        if (powerNow !== lastPower) { setPower(powerNow); lastPower = powerNow; }
+      }
+    } catch {
+      unknownStreak++;
+      if (unknownStreak >= 2) setPower('unknown');
+    }
+  }
+
+  // Initial + intervals
+  void checkConnection();
+  void checkPower();
+  setInterval(checkConnection, 15000);   // 15s
+  setInterval(checkPower, 600000);       // 10 minutes
+
+  // ---------- Buttons ----------
+  const log = document.getElementById('log');
+
+  document.getElementById('btn-one-two').onclick = async () => {
+    log.textContent = "Sending…";
+    try {
+      const r = await safeFetch('/api/one-single-two-quad14', { method: 'POST' });
       const j = await r.json();
       log.textContent = JSON.stringify(j, null, 2);
     } catch (e) {
       log.textContent = "Error: " + e;
     }
   };
+
+  document.getElementById('btn-out1-quad14').onclick = async () => {
+    const b = document.getElementById('btn-out1-quad14');
+    const t = b.textContent; b.textContent = 'Working…'; b.disabled = true;
+    try {
+      await safeFetch('/api/out1/quad14', { method: 'POST' });
+      triggerImmediateStatusCheck();
+    } finally {
+      b.disabled = false; b.textContent = t;
+    }
+  };
+
+  document.getElementById('btn-out1-single-from-audio').onclick = async () => {
+    const b = document.getElementById('btn-out1-single-from-audio');
+    const t = b.textContent; b.textContent = 'Switching…'; b.disabled = true;
+    try {
+      await safeFetch('/api/out1/single-from-current-audio', { method: 'POST' });
+      triggerImmediateStatusCheck();
+    } finally {
+      b.disabled = false; b.textContent = t;
+    }
+  };
+
+  // Input → Featured Source
+  document.querySelectorAll('button[data-src]').forEach(btn => {
+    btn.addEventListener('click', async () => {
+      const src = btn.getAttribute('data-src');
+      const slog = document.getElementById('select-log');
+      slog.textContent = `Setting featured source HDMI ${src}…`;
+      try {
+        const r = await safeFetch(`/api/out1/select/${src}`, { method: 'POST' });
+        const j = await r.json();
+        slog.textContent = JSON.stringify(j, null, 2);
+      } catch (e) {
+        slog.textContent = "Error: " + e;
+      }
+    });
+  });
+
+  // Borders tooling
+  document.getElementById('outline').onclick = async () => {
+    try {
+      const r = await safeFetch('/api/outline-current-on-quad', { method: 'POST' });
+      alert(await r.text());
+    } catch (e) {
+      alert("Outline failed: " + e);
+    }
+  };
+
+  document.getElementById('clear-out2').onclick = async () => {
+    const blog = document.getElementById('borders-log');
+    blog.textContent = "Clearing borders on OUT2…";
+    try {
+      const r = await safeFetch('/api/clear-borders/2', { method: 'POST' });
+      const j = await r.json();
+      blog.textContent = JSON.stringify(j, null, 2);
+    } catch (e) {
+      blog.textContent = "Error: " + e;
+    }
+  };
+
+  document.getElementById('btn-clear-both').onclick = async () => {
+    const b = document.getElementById('btn-clear-both');
+    const t = b.textContent; b.textContent = 'Clearing…'; b.disabled = true;
+    try {
+      await safeFetch('/api/clear-borders-both', { method:'POST' });
+    } finally {
+      b.disabled = false; b.textContent = t;
+    }
+  };
+
   document.getElementById('btn-refresh').addEventListener('click', async () => {
-  const b = document.getElementById('btn-refresh');
-  const orig = b.textContent;
-  b.textContent = 'Refreshing…'; b.disabled = true;
-  try {
-    const r = await fetch('/api/refresh-state', { method: 'POST' });
-    await r.json();
-    // Optionally kick your status poller to update immediately
-    if (typeof refreshStatus === 'function') refreshStatus();
-  } catch {}
-  b.disabled = false; b.textContent = orig;
-});
+    const b = document.getElementById('btn-refresh');
+    const orig = b.textContent;
+    b.textContent = 'Refreshing…'; b.disabled = true;
+    try {
+      const r = await safeFetch('/api/refresh-state', { method: 'POST' });
+      await r.json();
+      triggerImmediateStatusCheck();
+    } catch {}
+    b.disabled = false; b.textContent = orig;
+  });
+
+  // NEW: manual priming button
+  document.getElementById('btn-init').addEventListener('click', async () => {
+    const b = document.getElementById('btn-init');
+    const orig = b.textContent;
+    b.textContent = 'Priming…'; b.disabled = true;
+    try {
+      const r = await safeFetch('/api/init', { method: 'POST' });
+      const j = await r.json();
+      // Optional: nudge status after priming
+      triggerImmediateStatusCheck();
+      alert('Matrix primed successfully!');
+    } catch (e) {
+      alert('Priming failed: ' + e);
+    }
+    b.disabled = false; b.textContent = orig;
+  });
 </script>
