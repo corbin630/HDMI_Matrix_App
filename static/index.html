@@ -1,254 +1,459 @@
-<!doctype html>
-<meta charset="utf-8" />
-<title>HDMI Matrix</title>
-<style>
-  body { font-family: system-ui, Arial; margin: 2rem; }
-  button { padding: .8rem 1.1rem; font-size: 1rem; cursor: pointer; }
-  .status-bar { display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; margin-bottom: .75rem; }
-  .pill { display: inline-flex; align-items: center; gap: .4rem; font: 12px/1.2 system-ui, Arial, sans-serif;
-          padding: .18rem .45rem; border-radius: 999px; color: #fff; }
-  .pill.green { background: #16a34a; }
-  .pill.red   { background: #dc2626; }
-  .label { opacity: .9; font-weight: 600; margin-right: .25rem; }
-  pre { background: #0b0b0b; color: #e5e7eb; padding: .75rem; border-radius: .5rem; overflow: auto; }
-</style>
-
-<h1>HDMI Matrix</h1>
-
-<div class="status-bar">
-  <span id="conn-pill" class="pill red">
-    <span class="label">Matrix Connection</span><span id="conn-text">Disconnected</span>
-  </span>
-  <span id="power-pill" class="pill red">
-    <span class="label">Power Status</span><span id="power-text">Off / Unknown</span>
-  </span>
-  <button id="btn-refresh" style="font:12px system-ui; padding:.25rem .5rem; border-radius:6px; border:1px solid #ccc;">
-    Refresh State
-  </button>
-  <!-- NEW: manual priming button -->
-  <button id="btn-init" style="font:12px system-ui; padding:.25rem .5rem; border-radius:6px; border:1px solid #ccc;">
-    Prime Matrix (Init)
-  </button>
-</div>
-
-<!-- Convenience macro -->
-<button id="btn-one-two">OUT1 Single + Audio Follow • OUT2 Quad Box</button>
-
-<!-- Direct mode actions -->
-<div style="display:flex; gap:.5rem; flex-wrap:wrap; margin:.75rem 0;">
-  <button id="btn-out1-quad14">OUT1 → Quad Box</button>
-  <button id="btn-out1-single-from-audio">OUT1 → Single</button>
-</div>
-
-<pre id="log"></pre>
-
-<h2>Output 1 — Select Input</h2>
-<div style="display:flex; gap:.5rem; flex-wrap:wrap;">
-  <button data-src="1">HDMI 1 → OUT1</button>
-  <button data-src="2">HDMI 2 → OUT1</button>
-  <button data-src="3">HDMI 3 → OUT1</button>
-  <button data-src="4">HDMI 4 → OUT1</button>
-</div>
-<pre id="select-log"></pre>
-
-<h2>Borders</h2>
-<div style="display:flex; gap:.5rem; flex-wrap:wrap;">
-  <button id="outline">Outline current (OUT1) on OUT2 Quad</button>
-  <button id="btn-clear-both">Clear Borders (1 & 2)</button>
-  <button id="clear-out2">Clear Borders on OUT2</button>
-</div>
-<pre id="borders-log"></pre>
-
-<script>
-  // ---------- Status UI helpers ----------
-  function setConn(connected, responsive) {
-    const pill = document.getElementById('conn-pill');
-    const text = document.getElementById('conn-text');
-    if (connected) {
-      pill.classList.remove('red'); pill.classList.add('green');
-      text.textContent = responsive ? 'Connected' : 'Connected (no reply)';
-    } else {
-      pill.classList.remove('green'); pill.classList.add('red');
-      text.textContent = 'Disconnected';
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover" />
+  <title>HDMI Matrix – Home</title>
+  <style>
+    :root{
+      --bg:#000;
+      --fg:#fff;
+      --muted:#cfcfcf;
+      --ok:#2ecc71;
+      --warn:#ff5252;
+      --pill-bg:#111;
+      --card:#0d0d0d;
+      --border:#ffffff80;     /* light border for boxes */
+      --accent:#ff3b30;       /* highlight border for “Now Playing” */
+      --tap:0.96;
+      --radius:14px;
+      --gap:12px;
+      --btn-h:46px;
+      --fs-xxl: clamp(18px, 4.8vw, 26px);
+      --fs-xl:  clamp(16px, 4.4vw, 22px);
+      --fs-lg:  clamp(15px, 4.0vw, 20px);
+      --fs-md:  clamp(14px, 3.6vw, 18px);
+      --fs-sm:  clamp(12px, 3.2vw, 16px);
     }
-  }
-  function setPower(power) {
-    const pill = document.getElementById('power-pill');
-    const text = document.getElementById('power-text');
-    if (power === 'on')      { pill.classList.remove('red'); pill.classList.add('green'); text.textContent = 'On'; }
-    else if (power === 'off'){ pill.classList.remove('green'); pill.classList.add('red'); text.textContent = 'Off'; }
-    else                     { pill.classList.remove('green'); pill.classList.add('red'); text.textContent = 'Unknown'; }
-  }
-
-  // ---------- Request wrapper + immediate status fallback ----------
-  let lastPower = null, unknownStreak = 0;
-  let lastImmediateStatusAt = 0;
-
-  function triggerImmediateStatusCheck() {
-    const now = Date.now();
-    if (now - lastImmediateStatusAt < 1500) return; // throttle to 1.5s
-    lastImmediateStatusAt = now;
-    void checkConnection();
-    void checkPower();
-  }
-
-  async function safeFetch(url, options) {
-    try {
-      const r = await fetch(url, options);
-      if (!r.ok) throw new Error(`HTTP ${r.status}`);
-      return r;
-    } catch (e) {
-      // On any failed command, immediately re-sample status
-      triggerImmediateStatusCheck();
-      throw e;
+    *{box-sizing:border-box}
+    html,body{height:100%}
+    body{
+      margin:0; font-family: system-ui, -apple-system, Segoe UI, Roboto, Helvetica, Arial, "Apple Color Emoji","Segoe UI Emoji";
+      background:var(--bg); color:var(--fg);
     }
-  }
-
-  // ---------- Polling: connection (15s) and power (10 min) ----------
-  async function checkConnection() {
-    try {
-      const r = await fetch('/api/status');
-      const j = await r.json();
-      setConn(j.connected, j.responsive);
-    } catch {
-      setConn(false, false);
+    .page{
+      min-height:100%;
+      display:flex; flex-direction:column;
+      padding-bottom:84px; /* room for bottom nav */
     }
-  }
 
-  async function checkPower() {
-    try {
-      const r = await fetch('/api/status');
-      const j = await r.json();
-      const powerNow = j.power || 'unknown';
-      if (powerNow === 'unknown') {
-        unknownStreak++;
-        if (unknownStreak >= 2) { setPower('unknown'); lastPower = 'unknown'; }
-      } else {
-        unknownStreak = 0;
-        if (powerNow !== lastPower) { setPower(powerNow); lastPower = powerNow; }
+    /* top status row */
+    .row{display:flex; gap:var(--gap); align-items:center; flex-wrap:wrap}
+    .wrap{padding:14px var(--gap) 8px}
+
+    .pill{
+      padding:7px 12px; border-radius:999px; border:1px solid #ffffff30;
+      background:var(--pill-bg); font-size:var(--fs-sm); line-height:1; user-select:none;
+    }
+    .pill.ok{background:#123818; color:#d7ffd7; border-color:#51d16e60}
+    .pill.off{background:#3a0610; color:#ffd7d7; border-color:#ff7b7b60}
+
+    .dot-btn{
+      width:28px; height:28px; border-radius:6px; background:var(--warn);
+      border:1px solid #ffffff30; display:inline-block; cursor:pointer;
+      box-shadow:0 0 0 1px #000 inset;
+      transform:translateZ(0);
+    }
+    .dot-btn:active{transform:scale(var(--tap));}
+
+    .btn{
+      height:var(--btn-h);
+      padding:0 14px;
+      border-radius:var(--radius);
+      border:1px solid #ffffff40;
+      background:#111;
+      color:var(--fg);
+      font-size:var(--fs-md);
+      display:inline-flex; align-items:center; justify-content:center;
+      cursor:pointer; user-select:none; text-align:center;
+      transition:opacity .15s ease, background .15s ease, border-color .15s ease, transform .02s ease;
+    }
+    .btn:active{transform:scale(var(--tap));}
+    .btn.block{width:100%;}
+    .btn.ghost{background:transparent}
+    .btn[disabled]{opacity:.5; pointer-events:none}
+
+    .controls{display:grid; grid-template-columns:1fr; gap:var(--gap); margin-top:6px}
+    @media (min-width:520px){ .controls{ grid-template-columns:repeat(3, 1fr);} }
+
+    /* grid of windows */
+    .windows{
+      padding:10px var(--gap) 18px;
+      display:grid; gap:var(--gap);
+      grid-template-columns:1fr 1fr;
+      grid-auto-rows:1fr;
+    }
+    .win-wrap{display:flex; flex-direction:column; gap:8px}
+
+    .fsw-reserve{height:var(--btn-h)}          /* reserved space to avoid layout jump */
+    .fsw{visibility:hidden}
+    .fsw.show{visibility:visible}
+
+    .win{
+      border:2px solid var(--border);
+      border-radius:16px;
+      background:var(--card);
+      padding:20px 12px;
+      min-height:128px;
+      display:flex; align-items:center; justify-content:center; text-align:center;
+      cursor:pointer; transition:border-color .15s ease, transform .02s ease, box-shadow .15s ease;
+    }
+    .win:active{transform:scale(var(--tap));}
+    .win.now{ border-color:var(--accent); box-shadow:0 0 0 2px var(--accent) inset; }
+
+    .win .line1{ font-size:var(--fs-xxl); margin-bottom:8px; }
+    .win .label{ font-size:var(--fs-xl); color:var(--muted); }
+
+    /* bottom nav */
+    .nav{
+      position:fixed; left:0; right:0; bottom:0;
+      background:#0a0a0a; border-top:1px solid #ffffff20;
+      display:grid; grid-template-columns:repeat(5,1fr); gap:8px; padding:10px;
+    }
+    .nav .navbtn{
+      height:58px; border-radius:14px; border:1px solid #ffffff30; background:#101010;
+      display:flex; align-items:center; justify-content:center;
+      font-size:var(--fs-xl); user-select:none; cursor:pointer;
+      transition:transform .02s ease;
+    }
+    .nav .navbtn:active{transform:scale(var(--tap));}
+
+    /* toasts (non-dev, friendly) */
+    .toast{
+      position:fixed; left:50%; bottom:90px; transform:translateX(-50%);
+      background:#111; border:1px solid #ffffff30; padding:10px 14px; border-radius:12px;
+      font-size:var(--fs-sm); opacity:0; pointer-events:none; transition:opacity .25s ease;
+    }
+    .toast.show{opacity:1;}
+  </style>
+</head>
+<body>
+  <div class="page" id="app">
+
+    <!-- Top status row -->
+    <div class="wrap">
+      <div class="row">
+        <span id="conn-pill"   class="pill off">Disconnected</span>
+        <span id="power-pill"  class="pill off">Power Off</span>
+
+        <button id="btn-power-toggle" class="dot-btn" title="Toggle Matrix Power"></button>
+        <button id="btn-init" class="btn">Set to Default</button>
+      </div>
+
+      <!-- Three main controls -->
+      <div class="controls">
+        <button id="btn-one-two" class="btn block">1 Single 2 Quad</button>
+
+        <!-- Context button changes between “1 Quad Box” and “1 Single” -->
+        <button id="btn-mode-context" class="btn block">1 Quad Box</button>
+
+        <button id="btn-disable-borders" class="btn block" disabled>Disable Borders</button>
+      </div>
+    </div>
+
+    <!-- Windows grid -->
+    <div class="windows">
+      <!-- Window 1 -->
+      <div class="win-wrap" data-src="1">
+        <div class="fsw-reserve">
+          <button class="btn block ghost fsw" data-action="fsw">Full Screen Window</button>
+        </div>
+        <div class="win" data-action="select">
+          <div>
+            <div class="line1" data-dyn="line">Feature Audio</div>
+            <div class="label">HDMI 1</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Window 2 -->
+      <div class="win-wrap" data-src="2">
+        <div class="fsw-reserve">
+          <button class="btn block ghost fsw" data-action="fsw">Full Screen Window</button>
+        </div>
+        <div class="win" data-action="select">
+          <div>
+            <div class="line1" data-dyn="line">Feature Audio</div>
+            <div class="label">HDMI 2</div>
+          </div>
+        </div>
+      </div>
+
+      <!-- Window 3 -->
+      <div class="win-wrap" data-src="3">
+        <div class="win" data-action="select">
+          <div>
+            <div class="line1" data-dyn="line">Feature Audio</div>
+            <div class="label">HDMI 3</div>
+          </div>
+        </div>
+        <div class="fsw-reserve">
+          <button class="btn block ghost fsw" data-action="fsw">Full Screen Window</button>
+        </div>
+      </div>
+
+      <!-- Window 4 -->
+      <div class="win-wrap" data-src="4">
+        <div class="win" data-action="select">
+          <div>
+            <div class="line1" data-dyn="line">Feature Audio</div>
+            <div class="label">HDMI 4</div>
+          </div>
+        </div>
+        <div class="fsw-reserve">
+          <button class="btn block ghost fsw" data-action="fsw">Full Screen Window</button>
+        </div>
+      </div>
+    </div>
+
+    <!-- Bottom nav (future pages) -->
+    <div class="nav">
+      <div class="navbtn">🏠</div>
+      <div class="navbtn">1</div>
+      <div class="navbtn">2</div>
+      <div class="navbtn">⚙️</div>
+      <div class="navbtn">Logs</div>
+    </div>
+
+    <div id="toast" class="toast" role="status" aria-live="polite"></div>
+  </div>
+
+  <script>
+    // ---------- Minimal helpers ----------
+    const $ = (s, r=document)=> r.querySelector(s);
+    const $$ = (s, r=document)=> Array.from(r.querySelectorAll(s));
+
+    async function safeFetch(url, opts){
+      try{
+        const res = await fetch(url, {method:'POST', ...opts});
+        if(!res.ok) throw new Error('request failed');
+        return await res.json().catch(()=> ({}));
+      }catch(e){
+        refreshStatus(); // keep pills fresh on failure
+        return null;
       }
-    } catch {
-      unknownStreak++;
-      if (unknownStreak >= 2) setPower('unknown');
     }
-  }
 
-  // Initial + intervals
-  void checkConnection();
-  void checkPower();
-  setInterval(checkConnection, 15000);   // 15s
-  setInterval(checkPower, 600000);       // 10 minutes
-
-  // ---------- Buttons ----------
-  const log = document.getElementById('log');
-
-  document.getElementById('btn-one-two').onclick = async () => {
-    log.textContent = "Sending…";
-    try {
-      const r = await safeFetch('/api/one-single-two-quad14', { method: 'POST' });
-      const j = await r.json();
-      log.textContent = JSON.stringify(j, null, 2);
-    } catch (e) {
-      log.textContent = "Error: " + e;
+    function toast(msg, ms=1700){
+      const t = $('#toast'); t.textContent = msg; t.classList.add('show');
+      clearTimeout(toast._id); toast._id = setTimeout(()=>t.classList.remove('show'), ms);
     }
-  };
 
-  document.getElementById('btn-out1-quad14').onclick = async () => {
-    const b = document.getElementById('btn-out1-quad14');
-    const t = b.textContent; b.textContent = 'Working…'; b.disabled = true;
-    try {
-      await safeFetch('/api/out1/quad14', { method: 'POST' });
-      triggerImmediateStatusCheck();
-    } finally {
-      b.disabled = false; b.textContent = t;
+    // ---------- Device palette ID -> UI hex (for button outline only) ----------
+    const COLOR_ID_TO_HEX = {
+      1:'#000000', 2:'#ff3b30', 3:'#00ff00', 4:'#007aff',
+      5:'#ffd400', 6:'#ff2d55', 7:'#00ffff', 8:'#ffffff', 9:'#bfbfbf'
+    };
+
+    // ---------- UI State ----------
+    const UI = {
+      connected:false,
+      power:false,
+      out1Mode:'single',    // 'single' | 'quad'
+      featured:1,           // 1..4
+      borderColor:'#ff3b30' // hex derived from global border_color_id
+    };
+
+    // ---------- Status polling ----------
+    async function refreshStatus(){
+      try{
+        const res = await fetch('/api/status');
+        const s = await res.json();
+        UI.connected = !!s.connected;
+        UI.power = !!s.power;
+
+        await fetchUiState();   // lightweight hydrate (no refresh-state inside)
+
+        paintStatus();
+        paintWindows();
+        paintControls();
+      }catch(e){
+        UI.connected = false;
+        paintStatus();
+      }
     }
-  };
 
-  document.getElementById('btn-out1-single-from-audio').onclick = async () => {
-    const b = document.getElementById('btn-out1-single-from-audio');
-    const t = b.textContent; b.textContent = 'Switching…'; b.disabled = true;
-    try {
-      await safeFetch('/api/out1/single-from-current-audio', { method: 'POST' });
-      triggerImmediateStatusCheck();
-    } finally {
-      b.disabled = false; b.textContent = t;
+    // Hydrate OUT1 mode, featured, and global border color id
+    async function fetchUiState(){
+      try{
+        const r = await fetch('/api/ui');
+        if(r.ok){
+          const u = await r.json();
+          if(u && (u.out1_mode==='single' || u.out1_mode==='quad')) UI.out1Mode = u.out1_mode;
+          if(Number.isInteger(u.featured_source)) UI.featured = u.featured_source;
+          if(Number.isInteger(u.border_color_id)){
+            UI.borderColor = COLOR_ID_TO_HEX[u.border_color_id] || '#ff3b30';
+          }
+        }
+      }catch(e){ /* ignore if not implemented */ }
     }
-  };
 
-  // Input → Featured Source
-  document.querySelectorAll('button[data-src]').forEach(btn => {
-    btn.addEventListener('click', async () => {
-      const src = btn.getAttribute('data-src');
-      const slog = document.getElementById('select-log');
-      slog.textContent = `Setting featured source HDMI ${src}…`;
-      try {
-        const r = await safeFetch(`/api/out1/select/${src}`, { method: 'POST' });
-        const j = await r.json();
-        slog.textContent = JSON.stringify(j, null, 2);
-      } catch (e) {
-        slog.textContent = "Error: " + e;
+    function paintStatus(){
+      const conn = $('#conn-pill');
+      conn.textContent = UI.connected ? 'Connected' : 'Disconnected';
+      conn.classList.toggle('ok', UI.connected);
+      conn.classList.toggle('off', !UI.connected);
+
+      const p = $('#power-pill');
+      p.textContent = UI.power ? 'Power On' : 'Power Off';
+      p.classList.toggle('ok', UI.power);
+      p.classList.toggle('off', !UI.power);
+    }
+
+    function paintControls(){
+      const ctx = $('#btn-mode-context');
+      ctx.textContent = (UI.out1Mode === 'quad') ? '1 Single' : '1 Quad Box';
+
+      const show = (UI.out1Mode === 'quad');
+      $$('.fsw').forEach(b => b.classList.toggle('show', show));
+    }
+
+    function paintWindows(){
+      $$('.win-wrap').forEach(w => {
+        const src = Number(w.dataset.src);
+        const win = $('.win', w);
+        const line = $('[data-dyn="line"]', win);
+
+        const isFeatured = (src === UI.featured);
+
+        let txt = '';
+        if(isFeatured){
+          txt = 'Now Playing';
+        }else{
+          txt = (UI.out1Mode === 'quad') ? 'Feature Audio' : 'Feature Video';
+        }
+        line.textContent = txt;
+
+        win.classList.toggle('now', isFeatured);
+        if(isFeatured){
+          win.style.setProperty('--accent', UI.borderColor);
+        }
+      });
+    }
+
+    // ---------- Actions ----------
+    // Set to Default: full init flow (global color, prime, OUT1 single+follow, OUT2 quad, reconcile, snapshot)
+    $('#btn-init').addEventListener('click', async ()=>{
+      const btn = $('#btn-init'); btn.disabled = true;
+
+      let state = await safeFetch('/api/init/full');
+
+      if(state){
+        try{
+          if(state.out1_mode === 'single' || state.out1_mode === 'quad') UI.out1Mode = state.out1_mode;
+          if(Number.isInteger(state.featured_source)) UI.featured = state.featured_source;
+          if(Number.isInteger(state.border_color_id)){
+            UI.borderColor = COLOR_ID_TO_HEX[state.border_color_id] || '#ff3b30';
+          }
+        }catch(e){}
+        paintControls(); paintWindows();
+        await refreshStatus();
+        toast('Defaults applied');
+      }else{
+        // Fallback for older backends
+        const ok = await safeFetch('/api/init');
+        if(ok){
+          await safeFetch('/api/reconcile-ui');
+          await fetchUiState();
+          paintStatus(); paintControls(); paintWindows();
+          toast('Defaults applied');
+        }
+      }
+
+      btn.disabled = false;
+    });
+
+    $('#btn-one-two').addEventListener('click', async ()=>{
+      const ok = await safeFetch('/api/one-single-two-quad14');
+      if(ok){
+        UI.out1Mode = 'single';
+        paintControls(); paintWindows();
+        toast('Output 1: Single • Output 2: Quad');
       }
     });
-  });
 
-  // Borders tooling
-  document.getElementById('outline').onclick = async () => {
-    try {
-      const r = await safeFetch('/api/outline-current-on-quad', { method: 'POST' });
-      alert(await r.text());
-    } catch (e) {
-      alert("Outline failed: " + e);
-    }
-  };
+    $('#btn-mode-context').addEventListener('click', async ()=>{
+      if(UI.out1Mode === 'quad'){
+        const ok = await safeFetch('/api/out1/single-from-current-audio');
+        if(ok){
+          UI.out1Mode = 'single';
+          paintControls(); paintWindows();
+        }
+      }else{
+        const ok = await safeFetch('/api/out1/quad14');
+        if(ok){
+          UI.out1Mode = 'quad';
+          paintControls(); paintWindows();
+        }
+      }
+    });
 
-  document.getElementById('clear-out2').onclick = async () => {
-    const blog = document.getElementById('borders-log');
-    blog.textContent = "Clearing borders on OUT2…";
-    try {
-      const r = await safeFetch('/api/clear-borders/2', { method: 'POST' });
-      const j = await r.json();
-      blog.textContent = JSON.stringify(j, null, 2);
-    } catch (e) {
-      blog.textContent = "Error: " + e;
-    }
-  };
+    // Power toggle (placeholder)
+    $('#btn-power-toggle').addEventListener('click', async ()=>{
+      const res = await safeFetch('/api/power-toggle'); // not yet implemented server-side
+      if(res){
+        if(typeof res.power !== 'undefined') UI.power = !!res.power;
+        toast('Power command sent');
+      }else{
+        toast('Power control not available');
+      }
+      paintStatus();
+    });
 
-  document.getElementById('btn-clear-both').onclick = async () => {
-    const b = document.getElementById('btn-clear-both');
-    const t = b.textContent; b.textContent = 'Clearing…'; b.disabled = true;
-    try {
-      await safeFetch('/api/clear-borders-both', { method:'POST' });
-    } finally {
-      b.disabled = false; b.textContent = t;
-    }
-  };
+    // Big window buttons -> select featured (skip redundant POST if already featured)
+    $$('.win-wrap .win').forEach(btn=>{
+      btn.addEventListener('click', async (e)=>{
+        const wrap = e.currentTarget.closest('.win-wrap');
+        const src = wrap ? Number(wrap.dataset.src) : null;
+        if(!src) return;
 
-  document.getElementById('btn-refresh').addEventListener('click', async () => {
-    const b = document.getElementById('btn-refresh');
-    const orig = b.textContent;
-    b.textContent = 'Refreshing…'; b.disabled = true;
-    try {
-      const r = await safeFetch('/api/refresh-state', { method: 'POST' });
-      await r.json();
-      triggerImmediateStatusCheck();
-    } catch {}
-    b.disabled = false; b.textContent = orig;
-  });
+        if(src === UI.featured){
+          paintWindows();
+          return;
+        }
 
-  // NEW: manual priming button
-  document.getElementById('btn-init').addEventListener('click', async () => {
-    const b = document.getElementById('btn-init');
-    const orig = b.textContent;
-    b.textContent = 'Priming…'; b.disabled = true;
-    try {
-      const r = await safeFetch('/api/init', { method: 'POST' });
-      const j = await r.json();
-      // Optional: nudge status after priming
-      triggerImmediateStatusCheck();
-      alert('Matrix primed successfully!');
-    } catch (e) {
-      alert('Priming failed: ' + e);
-    }
-    b.disabled = false; b.textContent = orig;
-  });
-</script>
+        // Optimistic UI
+        UI.featured = src;
+        paintWindows();
+
+        const ok = await safeFetch(`/api/out1/select/${src}`);
+        if(!ok){
+          // optional rollback: await refreshStatus();
+        }
+      });
+    });
+
+    // Full Screen Window buttons (visible only in quad)
+    $$('.win-wrap [data-action="fsw"]').forEach(b=>{
+      b.addEventListener('click', async (e)=>{
+        const src = Number(e.currentTarget.closest('.win-wrap')?.dataset.src);
+        if(!src) return;
+
+        // Optimistic UI
+        UI.out1Mode = 'single';
+        UI.featured = src;
+        paintControls(); paintWindows();
+
+        // Unified endpoint using your existing router variant
+        const ok = await safeFetch(`/api/out1/mode/single/${src}`);
+        if(!ok){
+          // optional fallback: await refreshStatus();
+        }
+      });
+    });
+
+    // Initial load + periodic refresh
+    (async function init(){
+      // One-time refresh to make sure backend cache is current
+      await safeFetch('/api/refresh-state');
+
+      // Hydrate UI from the (now-correct) backend state
+      await fetchUiState();
+      paintStatus(); paintControls(); paintWindows();
+
+      // Keep pills + UI state fresh
+      setInterval(refreshStatus, 15000);
+    })();
+  </script>
+</body>
+</html>

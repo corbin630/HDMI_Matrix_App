@@ -3,6 +3,8 @@ import vendor.commands as C
 from services.state_cache import CACHE
 from services.featured import ensure_featured_applied
 from services.video import set_quad_14
+from services.video import set_single
+from services.audio import set_follow
 from services.serial_io import SER
 
 router = APIRouter(prefix="/api/out1")
@@ -61,11 +63,21 @@ def out1_single_from_current_audio():
         raise HTTPException(status_code=500, detail=str(e))
 
 # Optional: explicit mode endpoints if you want to call them (not used by index.html)
-@router.post("/mode/single")
-def set_mode_single():
-    CACHE.set("out1_mode", "single")
+@router.post("/mode/single/{src}")
+def set_mode_single_with_src(src: int):
+    # 1. Route OUT1 video to this HDMI in single mode
+    set_single(1, src)
+
+    # 2. Set audio follow (single-mode spec)
+    set_follow(1)
+
+    # 3. Mark featured source
+    CACHE.featured_source = src
+
+    # 4. Apply logic (updates borders, mirrors to OUT2, etc.)
     ensure_featured_applied()
-    return {"status": "ok", "out1_mode": "single"}
+
+    return {"status": "ok", "out1_mode": "single", "featured": src}
 
 @router.post("/mode/quad")
 def set_mode_quad():
